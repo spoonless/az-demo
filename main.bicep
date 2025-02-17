@@ -54,6 +54,29 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   }
 }
 
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: 'kv-${site}-${uniqueString(resourceGroup().id)}'
+  location: location
+  properties: {
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    tenantId: tenant().tenantId
+    accessPolicies:[]
+  }
+}
+
+resource sslCertificate 'Microsoft.Web/certificates@2024-04-01' = {
+  name: 'cert-${site}-${uniqueString(resourceGroup().id)}-001'
+  location: location
+  properties:{
+    canonicalName: '${site}.gayerie.dev'
+    keyVaultId: keyVault.id
+    keyVaultSecretName: 'cert-${site}-${uniqueString(resourceGroup().id)}-001'
+  }
+}
+
 var applicationGatewayName = 'agw-${site}-${uniqueString(resourceGroup().id)}'
 
 resource applicationGateway 'Microsoft.Network/applicationGateways@2024-05-01' = {
@@ -94,8 +117,7 @@ resource applicationGateway 'Microsoft.Network/applicationGateways@2024-05-01' =
       {
         name: 'agwSslCertificateHttps'
         properties:{
-          data: 'todo'
-          password: 'todo'
+          keyVaultSecretId: '${keyVault.properties.vaultUri}/${sslCertificate.name}'
         }
       }
     ]
