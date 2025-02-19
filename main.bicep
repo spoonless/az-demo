@@ -1,41 +1,19 @@
 metadata description = 'Creates a hosting for a static site'
 
 @description('name of the site')
-param site string = 'earth'
+param appName string = 'demo'
 
 @description('location of the data')
 param location string = resourceGroup().location
 
-var uniqueStorageName = 'st${site}${uniqueString(resourceGroup().id)}'
-
-resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
-  name: uniqueStorageName
-  location: location
-  sku: {
-    name: 'Standard_LRS'
-  }
-  kind: 'StorageV2'
-}
-
-resource storageAccountBlob 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
-  name: 'default'
-  parent: storageAccount
-}
-
-resource publicIPAddress 'Microsoft.Network/publicIPAddresses@2024-05-01' = {
-  name: 'ip-${site}-${uniqueString(resourceGroup().id)}-001' 
-  location: location
-  sku:{
-      name:'Basic'
-      tier:'Regional'
-  }
-  properties: {
-    publicIPAddressVersion: 'IPv4'
-  }
-}
+var uniqueId = uniqueString(resourceGroup().id)
+var publicIpAddressName = 'pip-${appName}-${uniqueId}-${location}'
+var vnetName = 'vnet-${appName}-${uniqueId}-${location}'
+var applicationGatewayName = 'agw-${appName}-${uniqueId}-${location}'
+var storageAccountForStaticFilesName = 'stwww${toLower(appName)}${uniqueId}'
 
 resource virtualNetwork 'Microsoft.Network/virtualNetworks@2024-05-01' = {
-  name: 'vnet-${site}-${uniqueString(resourceGroup().id)}-001'
+  name: vnetName
   location: location
   properties: {
     addressSpace: {
@@ -45,44 +23,38 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2024-05-01' = {
     }
     subnets: [
       {
-        name: 'subnet-001'
+        name: 'subnet-agw'
         properties: {
           addressPrefix: '10.0.0.0/24'
+          serviceEndpoints:[
+            {
+              locations: [location]
+              service: 'Microsoft.Storage'
+            }
+          ]
         }
       }
     ]
   }
 }
 
-resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
-  name: 'kv-${site}-${uniqueString(resourceGroup().id)}'
+resource publicIPAddress 'Microsoft.Network/publicIPAddresses@2024-05-01' = {
+  name: publicIpAddressName
   location: location
+  sku: {
+    name: 'Standard'
+    tier: 'Regional'
+  }
   properties: {
-    sku: {
-      family: 'A'
-      name: 'standard'
-    }
-    tenantId: tenant().tenantId
-    accessPolicies:[]
+    publicIPAddressVersion: 'IPv4'
+    publicIPAllocationMethod: 'Static'
   }
 }
-
-resource sslCertificate 'Microsoft.Web/certificates@2024-04-01' = {
-  name: 'cert-${site}-${uniqueString(resourceGroup().id)}-001'
-  location: location
-  properties:{
-    canonicalName: '${site}.gayerie.dev'
-    keyVaultId: keyVault.id
-    keyVaultSecretName: 'cert-${site}-${uniqueString(resourceGroup().id)}-001'
-  }
-}
-
-var applicationGatewayName = 'agw-${site}-${uniqueString(resourceGroup().id)}'
 
 resource applicationGateway 'Microsoft.Network/applicationGateways@2024-05-01' = {
   name: applicationGatewayName
   location: location
-  properties:{
+  properties: {
     sku: {
       capacity: 1
       name: 'Basic'
@@ -91,9 +63,11 @@ resource applicationGateway 'Microsoft.Network/applicationGateways@2024-05-01' =
 
     enableHttp2: true
 
+    sslCertificates: []
+
     frontendIPConfigurations: [
       {
-        name: 'agwFrontendIP'
+        name: 'publicFrontEndIP'
         properties: {
           publicIPAddress: {
             id: publicIPAddress.id
@@ -101,79 +75,71 @@ resource applicationGateway 'Microsoft.Network/applicationGateways@2024-05-01' =
         }
       }
     ]
-    
-    gatewayIPConfigurations: [
-      {
-        name: 'agwIPConfiguration'
-        properties: {
-          subnet: {
-            id: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetwork.name, 'subnet-001')
-          }
-        }
-      }
-    ]
-
-    sslCertificates: [
-      {
-        name: 'agwSslCertificateHttps'
-        properties:{
-          keyVaultSecretId: '${keyVault.properties.vaultUri}/${sslCertificate.name}'
-        }
-      }
-    ]
 
     frontendPorts: [
       {
-        name: 'agwFrontendPort'
+        name: 'publicFrontEndHttpPort'
         properties: {
           port: 80
         }
       }
-      {
-        name: 'agwFrontendSecuredPort'
-        properties: {
-          port: 443
-        }
-      }
     ]
 
-    backendHttpSettingsCollection: [
+    gatewayIPConfigurations: [
       {
-        name: 'backendHttpSettings'
+        name: 'subnet-agw'
         properties: {
-          protocol: 'Https'
-          port: 443
-          probeEnabled: false
-          cookieBasedAffinity: 'Disabled'
+          subnet: {
+            id: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetwork.name, 'subnet-agw')
+          }
         }
       }
     ]
 
     httpListeners: [
       {
-        name: 'agwHttpListener'
+        name: 'publicHttpListener'
         properties: {
           protocol: 'Http'
           frontendIPConfiguration: {
-            id: resourceId('Microsoft.Network/applicationGateways/frontendIPConfigurations', applicationGatewayName, 'agwFrontendIP')
+            id: resourceId('Microsoft.Network/applicationGateways/frontendIPConfigurations', applicationGatewayName, 'publicFrontEndIP')
           }
           frontendPort: {
-            id: resourceId('Microsoft.Network/applicationGateways/frontendPorts', applicationGatewayName, 'agwFrontendPort')
+            id: resourceId('Microsoft.Network/applicationGateways/frontendPorts', applicationGatewayName, 'publicFrontEndHttpPort')
           }
         }
       }
+    ]
+
+    backendHttpSettingsCollection: [
       {
-        name: 'agwHttpsListener'
+        name: 'staticSiteBackendHttpsSettings'
         properties: {
           protocol: 'Https'
-          frontendIPConfiguration: {
-            id: resourceId('Microsoft.Network/applicationGateways/frontendIPConfigurations', applicationGatewayName, 'agwFrontendIP')
+          port: 443
+          pickHostNameFromBackendAddress: true
+          path: '/public/'
+          probeEnabled: true
+          probe: {
+            id: resourceId('Microsoft.Network/applicationGateways/probes', applicationGatewayName, 'staticSiteProbe')
           }
-          frontendPort: {
-            id: resourceId('Microsoft.Network/applicationGateways/frontendPorts', applicationGatewayName, 'agwFrontendSecuredPort')
-          }
-          sslCertificate: {
-            id: resourceId('Microsoft.Network/applicationGateways/sslCertificates', applicationGatewayName, 'agwSslCertificateHttps')
+        }
+      }
+    ]
+
+    probes: [
+      {
+        name: 'staticSiteProbe'
+        properties: {
+          pickHostNameFromBackendHttpSettings: true
+          protocol: 'Https'
+          port: 443
+          timeout: 30
+          interval: 60
+          unhealthyThreshold: 3
+          path: '/public/index.html'
+          match: {
+            statusCodes: ['200-399', '404']
           }
         }
       }
@@ -181,59 +147,74 @@ resource applicationGateway 'Microsoft.Network/applicationGateways@2024-05-01' =
 
     backendAddressPools: [
       {
-        name: 'agwBackendAddressPoolStorage'
-        properties:{
-          backendAddresses:[
+        name: 'staticSiteBackendAddressPool'
+        properties: {
+          backendAddresses: [
             {
-              fqdn: '${storageAccount.name}.blob.${environment().suffixes.storage}'
+              fqdn: '${storageAccountForStaticFiles.name}.blob.${environment().suffixes.storage}'
             }
           ]
         }
       }
     ]
 
-    redirectConfigurations:[
-      {
-        name:'redirectConfigurationHttpToHttps'
-        properties:{
-          redirectType:'Temporary'
-          targetListener:{
-            id: resourceId('Microsoft.Network/applicationGateways/httpListeners', applicationGatewayName, 'agwHttpsListener')
-          }
-          includePath: true
-          includeQueryString: true
-        }
-      }
-    ]
-
     requestRoutingRules: [
       {
-        name:'httpToHttpsRule'
-        properties:{
-          ruleType: 'Basic'
-          httpListener: {
-            id: resourceId('Microsoft.Network/applicationGateways/httpListeners', applicationGatewayName, 'agwHttpListener')
-          }
-          redirectConfiguration:{
-            id: resourceId('Microsoft.Network/applicationGateways/redirectConfigurations', applicationGatewayName, 'redirectConfigurationHttpToHttps')
-          }
-        }
-      }
-      {
-        name: 'securedStorageRule'
+        name: 'staticSiteRequestRoutingRule'
         properties: {
-          ruleType:'Basic'
-          backendAddressPool: {
-            id: resourceId('Microsoft.Network/applicationGateways/backendAddressPools', applicationGatewayName, 'agwBackendAddressPoolStorage')
-          }
+          ruleType: 'Basic'
+          priority: 100
           httpListener: {
-            id: resourceId('Microsoft.Network/applicationGateways/httpListeners', applicationGatewayName, 'agwHttpsListener')
+            id: resourceId('Microsoft.Network/applicationGateways/httpListeners', applicationGatewayName, 'publicHttpListener')
+          }
+          backendAddressPool: {
+            id: resourceId('Microsoft.Network/applicationGateways/backendAddressPools', applicationGatewayName, 'staticSiteBackendAddressPool')
           }
           backendHttpSettings: {
-            id: resourceId('Microsoft.Network/applicationGateways/backendHttpSettingsCollection', applicationGatewayName, 'backendHttpSettings')
+            id: resourceId('Microsoft.Network/applicationGateways/backendHttpSettingsCollection', applicationGatewayName, 'staticSiteBackendHttpsSettings')
           }
         }
       }
     ]
   }
 }
+
+resource storageAccountForStaticFiles 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: storageAccountForStaticFilesName
+  location: location
+  sku: {
+    name: 'Standard_LRS'
+  }
+  kind: 'StorageV2'
+  properties: {
+    allowBlobPublicAccess: true
+    publicNetworkAccess: 'Enabled'
+    networkAcls: {
+      defaultAction: 'Deny'
+      virtualNetworkRules: [
+        {
+          action: 'Allow'
+          id: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetwork.name, 'subnet-agw')
+        }
+      ]
+    }
+  }
+}
+
+resource storageAccountBlobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  name: 'default'
+  parent: storageAccountForStaticFiles
+  properties: {
+    isVersioningEnabled: false
+  }
+}
+
+resource storageAccountContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2021-06-01' = {
+  parent: storageAccountBlobService
+  name: 'public'
+  properties: {
+    publicAccess: 'Blob'
+  }
+}
+
+output publicIpAddress string = publicIPAddress.properties.ipAddress
