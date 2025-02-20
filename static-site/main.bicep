@@ -56,12 +56,15 @@ resource applicationGateway 'Microsoft.Network/applicationGateways@2024-05-01' =
   location: location
   properties: {
     sku: {
-      capacity: 1
-      name: 'Basic'
-      tier: 'Basic'
+      name: 'Standard_v2'
+      tier: 'Standard_v2'
     }
-
     enableHttp2: true
+
+    autoscaleConfiguration: {
+      minCapacity: 0
+      maxCapacity: 2
+    }
 
     sslCertificates: []
 
@@ -118,7 +121,6 @@ resource applicationGateway 'Microsoft.Network/applicationGateways@2024-05-01' =
           protocol: 'Https'
           port: 443
           pickHostNameFromBackendAddress: true
-          path: '/public/'
           probeEnabled: true
           probe: {
             id: resourceId('Microsoft.Network/applicationGateways/probes', applicationGatewayName, 'staticSiteProbe')
@@ -158,12 +160,49 @@ resource applicationGateway 'Microsoft.Network/applicationGateways@2024-05-01' =
       }
     ]
 
+    rewriteRuleSets: [
+      {
+        name: 'rewritePathToStaticSite'
+        properties: {
+           rewriteRules: [
+            {
+              name: 'slashToHome'
+              ruleSequence: 1
+              conditions: [
+                {
+                  pattern: '^/$'
+                  variable: 'var_uri_path'
+                }
+              ]
+              actionSet: {
+                urlConfiguration: {
+                  modifiedPath: '/index.html'
+                }
+              }
+            }
+            {
+              name: 'addContainerPath'
+              ruleSequence: 100
+              actionSet: {
+                urlConfiguration: {
+                  modifiedPath: '/public{var_uri_path}'
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+
     requestRoutingRules: [
       {
         name: 'staticSiteRequestRoutingRule'
         properties: {
           ruleType: 'Basic'
           priority: 100
+          rewriteRuleSet: {
+            id: resourceId('Microsoft.Network/applicationGateways/rewriteRuleSets', applicationGatewayName, 'rewritePathToStaticSite')
+          }
           httpListener: {
             id: resourceId('Microsoft.Network/applicationGateways/httpListeners', applicationGatewayName, 'publicHttpListener')
           }
