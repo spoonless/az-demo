@@ -1,16 +1,23 @@
 metadata description = 'Creates a hosting for a static site'
 
-@description('name of the site')
-param appName string = 'demo'
+@description('resource group which acts as the central DNS zone')
+param centralResourceGroupName string = 'rg-site-dev-001'
+
+@description('name of the parent DNS zone')
+param centralDnsZoneName string = 'az.gayerie.dev'
 
 @description('location of the data')
 param location string = resourceGroup().location
+
+@description('name of the site')
+param appName string = 'demo'
 
 var uniqueId = uniqueString(resourceGroup().id)
 var publicIpAddressName = 'pip-${appName}-${uniqueId}-${location}'
 var vnetName = 'vnet-${appName}-${uniqueId}-${location}'
 var applicationGatewayName = 'agw-${appName}-${uniqueId}-${location}'
 var storageAccountForStaticFilesName = 'stwww${toLower(appName)}${uniqueId}'
+var publicDnsZoneName = '${appName}.${centralDnsZoneName}'
 
 resource virtualNetwork 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   name: vnetName
@@ -253,6 +260,37 @@ resource storageAccountContainer 'Microsoft.Storage/storageAccounts/blobServices
   name: 'public'
   properties: {
     publicAccess: 'Blob'
+  }
+}
+
+resource publicDnsZone 'Microsoft.Network/dnsZones@2018-05-01' = {
+  location: 'global'
+  name: publicDnsZoneName
+  properties: {
+    zoneType: 'Public'  
+  }
+}
+
+resource publicDnsZoneRecord 'Microsoft.Network/dnsZones/A@2018-05-01' = {
+  parent: publicDnsZone
+  name: '@'
+  properties: {
+    TTL: 3600
+    ARecords: [
+      {
+        ipv4Address: publicIPAddress.properties.ipAddress
+      }
+    ]
+  }
+}
+
+module updateCentralDns 'central_dns_update.bicep' = {
+  name: 'updateCentralDns'
+  scope: resourceGroup(centralResourceGroupName)
+  params: {
+    centralDnsZoneName: centralDnsZoneName
+    childDnsZoneName: appName
+    childDnsNameServers : publicDnsZone.properties.nameServers
   }
 }
 
