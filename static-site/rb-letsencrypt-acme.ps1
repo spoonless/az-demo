@@ -2,13 +2,16 @@
 
 param(
     [Parameter()]
-    [String] $KeyVault = "kv-site-dev-001",
+    [String] $KeyVault = "kv-envvars-demo-01",
 
     [Parameter()]
-    [String] $ResourceGroup = "rg-site-dev-001",
+    [String] $ResourceGroup = "rg-demo-france-central",
 
     [Parameter()]
-    [String] $ContactEmail = "david@gayerie.dev"
+    [String] $ContactEmail = "david@gayerie.dev",
+
+    [Parameter()]
+    [String] $managedIdentityClientId = "9bc01a9c-f0eb-4cd6-8097-aec5a091990f"
 )
 
 #region Imports
@@ -57,7 +60,14 @@ function Log-Message {
 
 $ErrorActionPreference = 'Stop'
 
-$Connection = (Connect-AzAccount -Identity).context
+# Ensures you do not inherit an AzContext in your runbook
+Disable-AzContextAutosave -Scope Process
+
+# Connect to Azure with user-assigned managed identity
+$AzureContext = (Connect-AzAccount -Identity -AccountId $managedIdentityClientId).context
+
+# set and store context
+$AzureContext = Set-AzContext -SubscriptionName $AzureContext.Subscription -DefaultProfile $AzureContext
 
 #endregion
 
