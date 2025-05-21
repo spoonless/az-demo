@@ -14,11 +14,11 @@ param(
 #region Imports
 
 # Make sure that this modules are present in the runbook environment. Go to
-# Modules galery in the automations account and import the following modules:
+# Modules gallery in the automations account and import the following modules:
 
 Import-Module "Az.KeyVault"
 Import-Module "Az.Dns"
-Import-Module 'ACME-PS'
+Import-Module "ACME-PS"
 
 #endregion
 
@@ -55,7 +55,7 @@ function Log-Message {
 
 #region Login
 
-$ErrorActionPreference = 'Stop' 
+$ErrorActionPreference = 'Stop'
 
 $Connection = (Connect-AzAccount -Identity).context
 
@@ -72,7 +72,7 @@ $AcmeService = "LetsEncrypt"
 
 # Find all the A DNS records within a subscription
 Log-Message "Finding A DNS records in this subscription"
-$Records = Get-AzDnsZone | ForEach-Object { 
+$Records = Get-AzDnsZone | ForEach-Object {
     Get-AzDnsRecordSet -ZoneName $_.Name -ResourceGroupName $_.ResourceGroupName
 } | Where-Object { $_.RecordType -eq "A" }
 
@@ -115,7 +115,7 @@ $Records | ForEach-Object -Process {
 
     # Try to get the certificate
     $Certificate = Get-AzKeyVaultCertificate -VaultName $KeyVault -Name $SubDomain
-    
+
     # Get information on the certificate if it exists
     # check its expiry and return if it is still fresh enough
     if ($Certificate) {
