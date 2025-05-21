@@ -84,7 +84,7 @@ $AcmeService = "LetsEncrypt"
 Log-Message "Finding A DNS records in this subscription"
 $Records = Get-AzDnsZone | ForEach-Object {
     Get-AzDnsRecordSet -ZoneName $_.Name -ResourceGroupName $_.ResourceGroupName
-} | Where-Object { $_.RecordType -eq "A" }
+} | Where-Object { $_.RecordType -eq "CNAME" }
 
 Log-Message "Found $($Records.length) DNS record(s)"
 $Records | Foreach-Object -Process {
@@ -114,17 +114,17 @@ $Records | ForEach-Object -Process {
         # Get the full domain name
         $Domain = "$($_.Name).$($_.ZoneName)"
     }
-    # Get the first part of the full domain name as the subdomain
-    $SubDomain = $Domain.Split(".")[0]
+
+    $KeyName = $Domain -replace "\.", "_"
 
     # Set some local vars for handling and storing the certificate
     $CertificatePassword = ConvertTo-SecureString $_.ZoneName -AsPlainText -Force
-    $CertificateExportPath = Join-Path -Path $AcmeTempDir -ChildPath "$($SubDomain).pfx"
+    $CertificateExportPath = Join-Path -Path $AcmeTempDir -ChildPath "$($KeyName).pfx"
 
-    Log-Message "Processing subdomain" -Prefix $SubDomain
+    Log-Message "Processing subdomain" -Prefix $Domain
 
     # Try to get the certificate
-    $Certificate = Get-AzKeyVaultCertificate -VaultName $KeyVault -Name $SubDomain
+    $Certificate = Get-AzKeyVaultCertificate -VaultName $KeyVault -Name $KeyName
 
     # Get information on the certificate if it exists
     # check its expiry and return if it is still fresh enough
@@ -132,9 +132,9 @@ $Records | ForEach-Object -Process {
         $Expires = $Certificate.Expires
         $ExpiresSpan = New-TimeSpan -Start (Get-Date) -End $Expires
 
-        Log-Message "Certificate expiring: $Expires" -Prefix $SubDomain
+        Log-Message "Certificate expiring: $Expires" -Prefix $Domain
         if ($ExpiresSpan.Days -gt 10) {
-            Log-Message "Certificate will not expire next week. Skipping this one." -Prefix $SubDomain
+            Log-Message "Certificate will not expire next week. Skipping this one." -Prefix $Domain
             continue
         }
     }
@@ -164,11 +164,11 @@ $Records | ForEach-Object -Process {
         }
 
         # Complete the order, ACME will check for the DNS TXT record
-        Log-Message "Completing ACME order" -Prefix $SubDomain
+        Log-Message "Completing ACME order" -Prefix $Domain
         $Challenge | Complete-ACMEChallenge -State $AcmeTempDir
 
         # Wait for the order to update
-        Log-Message "Waiting for the order to complete" -Prefix $SubDomain
+        Log-Message "Waiting for the order to complete" -Prefix $Domain
         while ($Order.Status -notin ("ready", "invalid")) {
             Start-Sleep -Seconds 5
             $Order | Update-ACMEOrder -State $AcmeTempDir -PassThru
@@ -177,7 +177,7 @@ $Records | ForEach-Object -Process {
         # If the order seems to be invalid, loop over it and go to the catch block
         if ($Order.Status -eq "invalid") {
             $InvalidMessage = "Your order has been marked as invalid - certificate cannot be issued."
-            Log-Message $InvalidMessage -Prefix $SubDomain -Level "ERROR"
+            Log-Message $InvalidMessage -Prefix $Domain -Level "ERROR"
         }
 
         # Complete the order - this will issue a certificate singing request
@@ -191,21 +191,21 @@ $Records | ForEach-Object -Process {
         }
 
         # Create a password for the certificate and export it
-        Log-Message "Exporting certificate to $CertificateExportPath" -Prefix $SubDomain
+        Log-Message "Exporting certificate to $CertificateExportPath" -Prefix $Domain
         Export-ACMECertificate -State $AcmeTempDir `
             -Order $Order `
             -Path $CertificateExportPath `
             -Password $CertificatePassword
 
         # Importing the certificate
-        Log-Message "Importing certificate to $KeyVault" -Prefix $SubDomain
-        Import-AzKeyVaultCertificate -VaultName $KeyVault -Name $SubDomain -FilePath $CertificateExportPath -Password $CertificatePassword
+        Log-Message "Importing certificate to $KeyVault" -Prefix $Domain
+        Import-AzKeyVaultCertificate -VaultName $KeyVault -Name $KeyName -FilePath $CertificateExportPath -Password $CertificatePassword
 
-        Log-Message "Done" -Prefix $SubDomain
+        Log-Message "Done" -Prefix $Domain
     }
     catch {
-        Log-Message "Processing of $SubDomain failed" -Level "WARN" -Prefix $SubDomain
-        Log-Message $_ -Level "WARN" -Prefix $SubDomain
+        Log-Message "Processing of $Domain failed" -Level "WARN" -Prefix $Domain
+        Log-Message $_ -Level "WARN" -Prefix $Domain
     }
     finally {
         # Cleanup the DNS record
